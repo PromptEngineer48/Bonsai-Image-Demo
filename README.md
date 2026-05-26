@@ -24,9 +24,6 @@
   <a href="https://colab.research.google.com/github/PrismML-Eng/Bonsai-image-demo/blob/main/notebooks/bonsai_image_colab.ipynb">Google Colab</a>
 </p>
 
-> **Placeholder:** the Google Colab notebook link still points at a URL
-> that doesn't exist yet. Swap once the notebook lands publicly.
-
 ---
 
 Generate images with Bonsai on Apple Silicon (macOS via [mflux](https://github.com/filipstrand/mflux) + MLX), NVIDIA GPU (Linux via [gemlite](https://github.com/dropbox/gemlite) + [HQQ](https://github.com/dropbox/hqq) kernels in `backend_gpu`), or NVIDIA GPU on **Windows natively** (same gemlite/HQQ stack via [triton-windows](https://github.com/triton-lang/triton-windows), no WSL2 needed).
