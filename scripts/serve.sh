@@ -28,6 +28,7 @@ ensure_venv "$DEMO_DIR"
 
 : "${BACKEND_PORT:=8000}"
 : "${FRONTEND_PORT:=3000}"
+: "${MCP_PORT:=8001}"
 : "${STUDIO_DIR:=$DEMO_DIR/vendor/image-studio}"
 
 # ── platform check ──
@@ -130,6 +131,10 @@ if command -v lsof >/dev/null 2>&1; then
     fi
     if lsof -nP -iTCP:"$FRONTEND_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
         err "Port $FRONTEND_PORT already in use (frontend)."
+        exit 1
+    fi
+    if lsof -nP -iTCP:"$MCP_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+        err "Port $MCP_PORT already in use (MCP server)."
         exit 1
     fi
 fi
@@ -246,6 +251,38 @@ echo "       logs: $FRONTEND_LOG"
        $_frontend_cmd) > "$FRONTEND_LOG" 2>&1 &
 FRONTEND_PID=$!
 
+MCP_LOG="$LOG_DIR/mcp.log"
+TUNNEL_LOG="$LOG_DIR/tunnel.log"
+step "Starting MCP server on :$MCP_PORT (streamable-http → /mcp)"
+echo "       logs: $MCP_LOG"
+(cd "$DEMO_DIR" \
+    && "$DEMO_DIR/.venv/bin/python" "$DEMO_DIR/mcp_server.py" \
+        > "$MCP_LOG" 2>&1) &
+MCP_PID=$!
+
+# Start a Cloudflare quick tunnel so Claude Desktop can reach the MCP server
+# over HTTPS (Claude Desktop requires HTTPS for custom connectors).
+# Requires cloudflared: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
+TUNNEL_PID=""
+TUNNEL_URL=""
+_cloudflared=""
+for _cf_candidate in cloudflared "$HOME/.local/bin/cloudflared" /usr/local/bin/cloudflared; do
+    if command -v "$_cf_candidate" >/dev/null 2>&1; then
+        _cloudflared="$_cf_candidate"; break
+    fi
+done
+if [ -n "$_cloudflared" ]; then
+    step "Starting Cloudflare HTTPS tunnel → :$MCP_PORT"
+    echo "       logs: $TUNNEL_LOG"
+    "$_cloudflared" tunnel --url "http://localhost:$MCP_PORT" \
+        --no-autoupdate \
+        > "$TUNNEL_LOG" 2>&1 &
+    TUNNEL_PID=$!
+else
+    warn "cloudflared not found — skipping HTTPS tunnel."
+    echo "       Install: curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /tmp/cf && sudo install /tmp/cf /usr/local/bin/cloudflared"
+fi
+
 # Kill children too — `npm run dev` spawns `next-server` as a grandchild and a
 # plain kill to the npm wrapper leaves the node process bound to :3000.
 _kill_tree() {
@@ -265,18 +302,22 @@ _kill_port() {
 
 cleanup() {
     set +e
-    info "Stopping (backend=$BACKEND_PID, frontend=$FRONTEND_PID)..."
+    info "Stopping (backend=$BACKEND_PID, frontend=$FRONTEND_PID, mcp=$MCP_PID, tunnel=$TUNNEL_PID)..."
     # Tree walk for direct children we know about.
     _kill_tree "$BACKEND_PID"
     _kill_tree "$FRONTEND_PID"
+    _kill_tree "$MCP_PID"
+    [ -n "$TUNNEL_PID" ] && _kill_tree "$TUNNEL_PID"
     # Belt-and-braces: `next dev` reparents `next-server` to launchd, so the
     # tree walk above misses it. Sweep anything still bound to our ports.
     sleep 1
     _kill_port "$BACKEND_PORT" TERM
     _kill_port "$FRONTEND_PORT" TERM
+    _kill_port "$MCP_PORT" TERM
     sleep 1
     _kill_port "$BACKEND_PORT" KILL
     _kill_port "$FRONTEND_PORT" KILL
+    _kill_port "$MCP_PORT" KILL
     # Drop the EXIT trap before exiting so we don't recurse, and don't wait —
     # reparented children won't show up in the shell's job table anyway.
     trap - EXIT
@@ -351,6 +392,23 @@ esac
 # Frontend timeout is non-fatal: dev-server can be slow to first-paint even
 # when it's fine on follow-up reloads.
 _wait_for_port "$FRONTEND_PORT" "Frontend" "$FRONTEND_PID" 60 || true
+# MCP server starts fast (pure Python, no GPU warmup).
+_wait_for_port "$MCP_PORT" "MCP server" "$MCP_PID" 30 || true
+
+# Extract the Cloudflare tunnel URL from its log (retries for up to 20s).
+if [ -n "$TUNNEL_PID" ]; then
+    _i=0
+    while [ $_i -lt 20 ]; do
+        TUNNEL_URL=$(grep -o 'https://[a-zA-Z0-9-]*\.trycloudflare\.com' "$TUNNEL_LOG" 2>/dev/null | head -1)
+        [ -n "$TUNNEL_URL" ] && break
+        sleep 1; _i=$((_i + 1))
+    done
+    if [ -n "$TUNNEL_URL" ]; then
+        info "Tunnel ready: $TUNNEL_URL"
+    else
+        warn "Tunnel URL not found yet — check $TUNNEL_LOG"
+    fi
+fi
 
 echo ""
 echo "========================================================================"
@@ -363,10 +421,17 @@ echo "    http://localhost:$BACKEND_PORT/             root"
 echo "    http://localhost:$BACKEND_PORT/backends     available arms + GPU probe"
 echo "    http://localhost:$BACKEND_PORT/docs         OpenAPI UI"
 echo ""
+echo "  Claude MCP — add to Claude Desktop → Connectors → +"
+if [ -n "$TUNNEL_URL" ]; then
+echo "    ${TUNNEL_URL}/mcp          ← HTTPS (paste this into Connectors)"
+else
+echo "    http://localhost:$MCP_PORT/mcp    (start cloudflared for HTTPS)"
+fi
+echo ""
 echo "  Logs: $LOG_DIR/"
 echo ""
 echo "========================================================================"
-echo "  Ctrl+C to stop both."
+echo "  Ctrl+C to stop all three."
 echo ""
 
 wait
