@@ -1,4 +1,4 @@
-# Bonsai Image Demo
+# Bonsai Image Demo — MCP Edition
 
 <p align="center">
   <img src="./assets/bonsai-logo.svg" width="280" alt="Bonsai Image">
@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="https://prismml.com"><b>Website</b></a> &nbsp;|&nbsp;
-  <a href="https://github.com/PrismML-Eng/Bonsai-Image-Demo"><b>GitHub</b></a> &nbsp;|&nbsp;
+  <a href="https://github.com/PrismML-Eng/Bonsai-Image-Demo"><b>Original Repo</b></a> &nbsp;|&nbsp;
   <a href="https://discord.gg/prismml"><b>Discord</b></a>
 </p>
 
@@ -23,6 +23,70 @@
   <a href="https://huggingface.co/spaces/prism-ml/Bonsai-image-demo">HuggingFace Space</a> ·
   <a href="https://colab.research.google.com/github/PrismML-Eng/Bonsai-image-demo/blob/main/notebooks/bonsai_image_colab.ipynb">Google Colab</a>
 </p>
+
+---
+
+## 🤖 MCP Server — Use your GPU from Claude Desktop
+
+> This fork adds an **MCP (Model Context Protocol) server** so Claude can generate images directly on your local GPU — no API key, no cloud, just your hardware.
+
+### What's new in this fork
+
+| File | Change |
+|------|--------|
+| `mcp_server.py` | FastMCP server — 4 Claude tools over `streamable-http` (port 8001) |
+| `scripts/serve.sh` | Now launches 4 processes: backend · frontend · MCP server · Cloudflare tunnel |
+| `pyproject.toml` | Added `mcp[cli]>=1.0` and `httpx>=0.27` |
+
+### Available Claude tools
+
+| Tool | What it does |
+|------|-------------|
+| `health_check` | Confirm the GPU backend is running |
+| `list_backends` | Show available quantisation backends |
+| `generate_image` | Generate an image from a text prompt |
+| `compare_backends` | Run the same prompt on multiple backends side-by-side |
+
+### Setup (Linux / WSL2 + NVIDIA GPU)
+
+```bash
+# 1. Clone this repo
+git clone https://github.com/PromptEngineer48/Bonsai-Image-Demo.git
+cd Bonsai-Image-Demo
+
+# 2. Install Python + Node dependencies
+./setup.sh
+
+# 3. Download the ternary FLUX model (~4 GB)
+./scripts/download_model.sh
+
+# 4. Install cloudflared — needed for the HTTPS tunnel Claude Desktop requires (one-time)
+curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+     -o /tmp/cf && sudo install /tmp/cf /usr/local/bin/cloudflared
+
+# 5. Start backend + frontend + MCP server + tunnel
+./scripts/serve.sh
+```
+
+When ready, the terminal prints:
+
+```
+  Claude MCP — add to Claude Desktop → Connectors → +
+  https://xxxx.trycloudflare.com/mcp
+```
+
+Copy that URL, open **Claude Desktop → Settings → Connectors → +**, paste it, and click Add.
+
+> ⚠️ The tunnel URL changes every time you restart `serve.sh` — re-add it in Connectors each time.
+
+### Example prompts
+
+```
+Generate an image of a bonsai tree on a wooden desk, warm studio lighting, 4K
+```
+```
+Compare backends with the prompt: a futuristic city at night, neon reflections on wet streets
+```
 
 ---
 
